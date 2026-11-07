@@ -1439,9 +1439,7 @@ function renderScorePermission() {
   // 保存按钮不再 disabled，非负责人点击时弹出权限提示（见 click 回调）
   const saveBtn = document.getElementById("btn-score-save");
   if (saveBtn) saveBtn.disabled = false;
-  // 清空记录按钮：仅超级管理员可见
-  const clearBtn = document.getElementById("btn-clear-records");
-  if (clearBtn) clearBtn.hidden = !(normalizePhone(currentUserPhone || "") === SUPER_ADMIN_PHONE);
+  // 清空全部记录按钮：始终显示，非超级管理员点击时弹出权限提示（见 click 回调）
 }
 
 // 加载成员下拉（记分用，排除停用成员和负责人）
@@ -1946,7 +1944,7 @@ document.getElementById("btn-clear-records").addEventListener("click", async () 
   if (!cloud) return;
   const phone = normalizePhone(currentUserPhone || "");
   if (phone !== SUPER_ADMIN_PHONE) {
-    alert("你没有权限执行此操作。");
+    showPermissionToast("你没有权限清空记录，仅超级管理员可以操作。");
     return;
   }
   const confirmed = confirm("确定要清空所有加减分记录吗？\n\n此操作将删除全部加分/扣分记录，所有成员积分回到初始状态（基础分 85），且不可恢复。\n\n确定继续？");
@@ -1955,7 +1953,7 @@ document.getElementById("btn-clear-records").addEventListener("click", async () 
   const { data, error } = await cloud.database.from("scores").delete().neq("id", 0).select();
   if (error) { alert("清空失败：" + (error.message || "")); return; }
   const removed = Array.isArray(data) ? data.length : 0;
-  alert(`已清空 ${removed} 条记录，回到初始状态。`);
+  showPermissionToast(`已清空 ${removed} 条记录，回到初始状态。`);
   await loadScores();
   updateActiveMemberMetric([]);
 });
