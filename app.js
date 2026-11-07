@@ -60,7 +60,7 @@ function switchView(view) {
   }
   // 切到加减分页时刷新数据
   if (view === "scores") {
-    loadScores();
+    checkScorePermission().then(() => loadScores());
     loadMemberOptions();
     loadMemberList();
     loadAdminList();
@@ -82,6 +82,9 @@ document.getElementById("toggle-sidebar").addEventListener("click", () => {
   } else {
     document.body.classList.toggle("sidebar-collapsed");
   }
+});
+document.getElementById("sidebar-backdrop").addEventListener("click", () => {
+  document.body.classList.remove("sidebar-open");
 });
 
 // ===== 导航绑定 =====
@@ -321,7 +324,12 @@ async function refreshUser() {
 
   // 登录状态变化后，刷新各页面的权限控件（添加活动按钮、记账按钮等）
   if (typeof checkReminderPermission === "function") checkReminderPermission();
-  if (typeof checkScorePermission === "function") checkScorePermission();
+  if (typeof checkScorePermission === "function") {
+    checkScorePermission().then(() => {
+      const ranking = document.getElementById("subtab-ranking");
+      if (ranking && !ranking.hidden) loadScores();
+    });
+  }
 }
 
 // 给头像元素设置显示：有自定义头像则用图片，否则用首字母
@@ -1180,7 +1188,7 @@ document.querySelectorAll('#view-scores .sub-tab').forEach((tab) => {
     document.getElementById("subtab-ranking").hidden = target !== "ranking";
     document.getElementById("subtab-score-entry").hidden = target !== "score-entry";
     document.getElementById("subtab-member-mgmt").hidden = target !== "member-mgmt";
-    if (target === "ranking") { loadScores(); checkScorePermission(); }
+    if (target === "ranking") { checkScorePermission().then(() => loadScores()); }
     if (target === "score-entry") { loadMemberOptions(); checkScorePermission(); }
     if (target === "member-mgmt") { loadMemberList(); loadAdminList(); }
   });
@@ -1254,7 +1262,7 @@ async function loadMemberList() {
   document.getElementById("btn-add-member").hidden = false;
   const { data } = await cloud.database.from("member_meta").select("name, role, status, uid").order("name");
   if (!data || data.length === 0) {
-    listEl.innerHTML = '<div class="empty-state"><p>暂无成员，点击右上角「添加成员」。</p></div>';
+    listEl.innerHTML = '<div class="empty-state"><p>暂无成员，点击「添加成员」。</p></div>';
     return;
   }
   listEl.innerHTML = data
@@ -1297,6 +1305,29 @@ async function loadMemberList() {
 // 添加/编辑成员
 const memberDialog = document.getElementById("member-dialog");
 let editingMemberName = null;
+
+document.getElementById("btn-clear-members").addEventListener("click", async () => {
+  if (!cloud) return;
+  if (!isAdminUser) { showPermissionToast("你没有权限删除成员，仅负责人可以操作。"); return; }
+  const names = [...document.querySelectorAll("#score-ranking .member-check:checked")]
+    .map((el) => el.dataset.name)
+    .filter(Boolean);
+  if (names.length === 0) { showPermissionToast("请先勾选要删除的成员。"); return; }
+  const confirmed = confirm(`确定删除选中的 ${names.length} 位成员吗？\n\n${names.join("、")}\n\n将同时删除这些成员的加减分记录，且不可恢复。`);
+  if (!confirmed) return;
+  for (const name of names) {
+    const scoreRes = await cloud.database.from("scores").delete().eq("member", name);
+    if (scoreRes.error) { alert("清空加减分记录失败：" + (scoreRes.error.message || name)); return; }
+    const memberRes = await cloud.database.from("members").delete().eq("name", name);
+    if (memberRes.error) { alert("删除成员失败：" + (memberRes.error.message || name)); return; }
+    const metaRes = await cloud.database.from("member_meta").delete().eq("name", name);
+    if (metaRes.error) { alert("删除成员资料失败：" + (metaRes.error.message || name)); return; }
+  }
+  showPermissionToast(`已删除 ${names.length} 位成员。`);
+  await loadScores();
+  await loadMemberList();
+  await loadMemberOptions();
+});
 
 document.getElementById("btn-add-member").addEventListener("click", () => {
   if (!isAdminUser) { showPermissionToast("你没有权限添加成员，仅负责人可以操作。"); return; }
@@ -1552,8 +1583,12 @@ async function loadScores() {
     .map((r, i) => {
       const numClass = i === 0 ? "top1" : i === 1 ? "top2" : i === 2 ? "top3" : "";
       const deltaStr = r.delta > 0 ? `+${r.delta}` : `${r.delta}`;
+      const check = isAdminUser
+        ? `<input type="checkbox" class="member-check" data-name="${escapeHtml(r.name)}" aria-label="选择${escapeHtml(r.name)}" />`
+        : "";
       return `
       <div class="score-rank-item" data-name="${escapeHtml(r.name)}">
+        ${check}
         <span class="score-rank-num ${numClass}">${i + 1}</span>
         <div class="score-rank-info">
           <span class="score-rank-name">${escapeHtml(r.name)}</span>
@@ -1566,6 +1601,9 @@ async function loadScores() {
     .join("");
 
   // 点击看明细
+  rankingEl.querySelectorAll(".member-check").forEach((box) => {
+    box.addEventListener("click", (e) => e.stopPropagation());
+  });
   rankingEl.querySelectorAll(".score-rank-item").forEach((item) => {
     item.addEventListener("click", () => openMemberDetail(item.dataset.name, detailMap, memberList));
   });
